@@ -13,11 +13,5 @@ export async function onRequest(context) {
     });
   }
 
-  // 静态资源（含 . 的路径）让 Cloudflare 自动处理
-  if (url.pathname.startsWith('/assets/') || url.pathname.includes('.')) {
-    return context.next();
-  }
-
-  // 其他请求 -> SPA fallback
-  return context.env.ASSETS.fetch('/index.html');
+  return context.next();
 }
