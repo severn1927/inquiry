@@ -196,7 +196,7 @@ export function UserManagementPage() {
                         </div>
                         <span className="text-sm font-medium text-slate-800">{user.username}</span>
                         {user.role === 'admin' && (
-                          <Shield className="w-3.5 h-3.5 text-amber-500" title="管理员" />
+                          <span title="管理员"><Shield className="w-3.5 h-3.5 text-amber-500" /></span>
                         )}
                       </div>
                     </td>

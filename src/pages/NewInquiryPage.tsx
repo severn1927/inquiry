@@ -28,7 +28,7 @@ function assignAsiaDuty(persons: StaffItem[], dutyConfig: { base_date: string; s
   try {
     const base = new Date(dutyConfig.base_date)
     const now = new Date()
-    const days = Math.floor((now.getTime() - base.getTime()) / (1000 * 60 * 60 * 24))
+    let days = Math.floor((now.getTime() - base.getTime()) / (1000 * 60 * 60 * 24))
     if (days < 0) days = 0
     const cycle = dutyConfig.staff_order.length * dutyConfig.days_per_person
     const pos = days % cycle
