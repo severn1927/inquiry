@@ -1,0 +1,7 @@
+name = "inquiry"
+main = "_worker.js"
+compatibility_date = "2026-05-18"
+compatibility_flags = ["nodejs_compat"]
+
+[site]
+bucket = "./dist"
