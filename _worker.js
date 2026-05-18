@@ -4,7 +4,7 @@ export default {
 
     // /api 请求 -> 代理到后端
     if (url.pathname.startsWith('/api/')) {
-      const backendUrl = 'https://api.css123.com' + url.pathname + url.search;
+      const backendUrl = 'http://api.css123.com' + url.pathname + url.search;
       const headers = new Headers(request.headers);
       headers.delete('host');
       return fetch(backendUrl, {
