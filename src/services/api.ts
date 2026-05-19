@@ -7,7 +7,7 @@ import type {
 } from '@/types'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: 'https://api.css123.com/api',
   timeout: 30000,
 })
 
