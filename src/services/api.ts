@@ -3,7 +3,6 @@ import type {
   Inquiry, InquiryCreate, InquiryUpdate, AIAnalysisResult,
   DashboardStats, PaginatedResponse, LoginResponse, User,
   StaffItem, StaffDutyConfig, ScheduleItem, ApiSettings,
-  DictType, DictItem, DictOption,
   AnalyticsOverview, AnalyticsTrend,
   DictItem, CountryStaff, AssignRules,
 } from '@/types'
@@ -86,39 +85,6 @@ export const inquiryApi = {
 
   batchDelete: (ids: number[]) =>
     api.post('/inquiries/batch-delete', { ids }),
-}
-
-// ========== Dicts ==========
-export const dictApi = {
-  getTypes: () =>
-    api.get<DictType[]>('/dicts/types'),
-
-  createType: (data: { name: string; code: string; sort_order?: number }) =>
-    api.post<DictType>('/dicts/types', data),
-
-  updateType: (id: number, data: { name?: string; code?: string; sort_order?: number }) =>
-    api.put<DictType>(`/dicts/types/${id}`, data),
-
-  deleteType: (id: number) =>
-    api.delete(`/dicts/types/${id}`),
-
-  getItems: (typeId: number) =>
-    api.get<DictItem[]>(`/dicts/types/${typeId}/items`),
-
-  createItem: (typeId: number, data: { label: string; value: string; sort_order?: number }) =>
-    api.post<DictItem>(`/dicts/types/${typeId}/items`, data),
-
-  updateItem: (itemId: number, data: { label?: string; value?: string; sort_order?: number; is_active?: boolean }) =>
-    api.put<DictItem>(`/dicts/items/${itemId}`, data),
-
-  deleteItem: (itemId: number) =>
-    api.delete(`/dicts/items/${itemId}`),
-
-  getOptions: (code: string) =>
-    api.get<DictOption[]>(`/dicts/public/${code}`),
-
-  initData: () =>
-    api.get('/dicts/init'),
 }
 
 // ========== AI Analysis (long timeout) ==========
