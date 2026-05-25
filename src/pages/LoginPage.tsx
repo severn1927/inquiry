@@ -84,10 +84,6 @@ export function LoginPage() {
               {loading ? '登录中...' : '登 录'}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-white/10 text-center">
-            <p className="text-primary-300/60 text-xs">默认账号: admin / admin123</p>
-          </div>
         </div>
       </div>
     </div>
