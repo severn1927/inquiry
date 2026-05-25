@@ -36,9 +36,6 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-18 h-18 rounded-2xl bg-gradient-to-br from-primary-400 to-accent-500 flex items-center justify-center font-bold text-2xl text-white mx-auto mb-4 shadow-xl shadow-primary-500/30">
-            AINQ
-          </div>
           <h1 className="font-display text-3xl font-bold text-white mb-2">爱询盘管理系统</h1>
           <p className="text-primary-300">AI Inquiry Management System </p>
         </div>
