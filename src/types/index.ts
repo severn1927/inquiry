@@ -37,6 +37,7 @@ export interface Inquiry {
   sender: string
   remark: string
   inquiry_month: string
+  inquiry_time: string
   created_at: string
   updated_at: string
 }
@@ -60,6 +61,7 @@ export interface InquiryCreate {
   is_spam: boolean
   spam_reason: string
   remark: string
+  inquiry_time: string
 }
 
 export interface InquiryUpdate {
@@ -83,6 +85,7 @@ export interface InquiryUpdate {
   sender?: string
   is_spam?: boolean
   spam_reason?: string
+  inquiry_time?: string
 }
 
 // ===== AI 分析结果 =====
@@ -107,6 +110,7 @@ export interface AIAnalysisResult {
     sender?: string
     staff?: string
     staff_email?: string
+    email_time?: string
   }
   ai_raw: Record<string, any>
   ocr_text: string
@@ -184,4 +188,32 @@ export interface AnalyticsOverview {
 export interface AnalyticsTrend {
   period: string
   data: { period: string; count: number }[]
+}
+
+// ===== 字典表 =====
+export interface DictItem {
+  id: number
+  category: string
+  name: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+// ===== 国家专属分配 =====
+export interface CountryStaff {
+  country: string
+  staff_name: string
+  staff_email: string
+}
+
+// ===== 分配规则 =====
+export interface ContinentOverrideItem {
+  region: string        // 归属大区
+  countries: string[]   // 属于该地区的国家列表
+}
+
+export interface AssignRules {
+  schedule_regions: string[]
+  continent_overrides: Record<string, ContinentOverrideItem>  // 地区名 -> {region, countries}
 }

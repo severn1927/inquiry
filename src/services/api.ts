@@ -3,7 +3,9 @@ import type {
   Inquiry, InquiryCreate, InquiryUpdate, AIAnalysisResult,
   DashboardStats, PaginatedResponse, LoginResponse, User,
   StaffItem, StaffDutyConfig, ScheduleItem, ApiSettings,
+  DictType, DictItem, DictOption,
   AnalyticsOverview, AnalyticsTrend,
+  DictItem, CountryStaff, AssignRules,
 } from '@/types'
 
 const api = axios.create({
@@ -66,7 +68,7 @@ export const inquiryApi = {
   getList: (params?: {
     page?: number; page_size?: number; keyword?: string;
     region?: string; staff?: string; is_spam?: string;
-    start_date?: string; end_date?: string;
+    continent?: string; start_date?: string; end_date?: string;
   }) =>
     api.get<PaginatedResponse<Inquiry>>('/inquiries', { params }),
 
@@ -84,6 +86,39 @@ export const inquiryApi = {
 
   batchDelete: (ids: number[]) =>
     api.post('/inquiries/batch-delete', { ids }),
+}
+
+// ========== Dicts ==========
+export const dictApi = {
+  getTypes: () =>
+    api.get<DictType[]>('/dicts/types'),
+
+  createType: (data: { name: string; code: string; sort_order?: number }) =>
+    api.post<DictType>('/dicts/types', data),
+
+  updateType: (id: number, data: { name?: string; code?: string; sort_order?: number }) =>
+    api.put<DictType>(`/dicts/types/${id}`, data),
+
+  deleteType: (id: number) =>
+    api.delete(`/dicts/types/${id}`),
+
+  getItems: (typeId: number) =>
+    api.get<DictItem[]>(`/dicts/types/${typeId}/items`),
+
+  createItem: (typeId: number, data: { label: string; value: string; sort_order?: number }) =>
+    api.post<DictItem>(`/dicts/types/${typeId}/items`, data),
+
+  updateItem: (itemId: number, data: { label?: string; value?: string; sort_order?: number; is_active?: boolean }) =>
+    api.put<DictItem>(`/dicts/items/${itemId}`, data),
+
+  deleteItem: (itemId: number) =>
+    api.delete(`/dicts/items/${itemId}`),
+
+  getOptions: (code: string) =>
+    api.get<DictOption[]>(`/dicts/public/${code}`),
+
+  initData: () =>
+    api.get('/dicts/init'),
 }
 
 // ========== AI Analysis (long timeout) ==========
@@ -105,6 +140,39 @@ export const settingsApi = {
 
   updateStaffDuty: (data: { staff?: StaffItem[]; duty?: { base_date: string; staff_order: string[]; days_per_person: number } }) =>
     api.put('/settings/staff-duty', data),
+
+  // 分配规则
+  getAssignRules: () =>
+    api.get<AssignRules>('/settings/assign-rules'),
+
+  updateAssignRules: (data: AssignRules) =>
+    api.put('/settings/assign-rules', data),
+
+  // 国家专属分配
+  getCountryStaff: () =>
+    api.get<CountryStaff[]>('/settings/country-staff'),
+
+  addCountryStaff: (data: { country: string; staff_name: string; staff_email?: string }) =>
+    api.post('/settings/country-staff', data),
+
+  deleteCountryStaff: (country: string) =>
+    api.delete(`/settings/country-staff/${encodeURIComponent(country)}`),
+
+  // 字典表
+  getDictItems: (category: string) =>
+    api.get<DictItem[]>(`/settings/dict/${encodeURIComponent(category)}`),
+
+  getDictCategories: () =>
+    api.get<string[]>('/settings/dict'),
+
+  addDictItem: (data: { category: string; name: string; sort_order?: number }) =>
+    api.post('/settings/dict', data),
+
+  updateDictItem: (id: number, data: { name?: string; sort_order?: number }) =>
+    api.put(`/settings/dict/${id}`, data),
+
+  deleteDictItem: (id: number) =>
+    api.delete(`/settings/dict/${id}`),
 }
 
 // ========== Schedule ==========

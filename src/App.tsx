@@ -6,6 +6,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { InquiryListPage } from '@/pages/InquiryListPage'
 import { NewInquiryPage } from '@/pages/NewInquiryPage'
 import { InquiryDetailPage } from '@/pages/InquiryDetailPage'
+import { DictManagementPage } from '@/pages/DictManagementPage'
 import { UserManagementPage } from '@/pages/UserManagementPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
@@ -26,6 +27,7 @@ function ProtectedRoutes() {
         <Route path="/inquiries/new" element={<NewInquiryPage />} />
         <Route path="/inquiries/:id" element={<InquiryDetailPage />} />
         <Route path="/users" element={<UserManagementPage />} />
+        <Route path="/dicts" element={<DictManagementPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
       </Route>

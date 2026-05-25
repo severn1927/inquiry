@@ -3,16 +3,15 @@ import { Link } from 'react-router-dom'
 import { inquiryApi } from '@/services/api'
 import type { Inquiry } from '@/types'
 import { formatDate } from '@/utils'
+import { useDicts } from '@/hooks/useDict'
 import {
   Search, PlusCircle, Eye, Trash2, Mail,
   ChevronLeft, ChevronRight, RefreshCw, ChevronDown, Zap, Download,
+  CalendarDays, ShieldAlert, ShieldCheck, Square, SquareCheck,
 } from 'lucide-react'
 import { exportApi } from '@/services/api'
 import { saveAs } from 'file-saver'
-
-const REGIONS = ['全部', '美洲', '欧非', '亚太']
-
-const CONTINENTS = ['全部', '亚洲', '欧洲', '非洲', '北美洲', '南美洲', '大洋洲', '中东']
+import toast from 'react-hot-toast'
 
 export function InquiryListPage() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
@@ -22,30 +21,47 @@ export function InquiryListPage() {
   const [regionFilter, setRegionFilter] = useState('')
   const [continentFilter, setContinentFilter] = useState('')
   const [isSpamFilter, setIsSpamFilter] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // 字典数据驱动筛选下拉
+  const dictData = useDicts(['continent', 'region'])
+  const regionOptions = ['全部', ...(dictData.region || [])]
+  const continentOptions = ['全部', ...(dictData.continent || [])]
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const pageSize = 20
 
-  const fetchData = () => {
+  const fetchData = useCallback(() => {
     setLoading(true)
     inquiryApi.getList({
       page,
       page_size: pageSize,
       keyword: search || undefined,
       region: regionFilter || undefined,
+      continent: continentFilter || undefined,
       is_spam: isSpamFilter || undefined,
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
     }).then((res) => {
       setInquiries(res.data.items)
       setTotal(res.data.total)
+      setSelectedIds(new Set())
       setLoading(false)
     }).catch(() => setLoading(false))
-  }
+  }, [page, search, regionFilter, continentFilter, isSpamFilter, startDate, endDate])
 
-  useEffect(() => { fetchData() }, [page])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     setPage(1)
     fetchData()
+  }
+
+  const handleFilterChange = (setter: (v: string) => void) => (v: string) => {
+    setter(v)
+    setPage(1)
   }
 
   const handleDelete = async (id: number) => {
@@ -54,15 +70,46 @@ export function InquiryListPage() {
     fetchData()
   }
 
-  const handleExport = async () => {
+  const handleExport = async (ids?: number[]) => {
     try {
-      const res = await exportApi.exportExcel()
+      const res = await exportApi.exportExcel(ids)
       const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       saveAs(blob, `询盘数据_${new Date().toISOString().slice(0, 10)}.xlsx`)
     } catch {
-      alert('导出失败')
+      toast.error('导出失败')
     }
   }
+
+  const handleSpamToggle = async (item: Inquiry) => {
+    const newIsSpam = item.is_spam ? false : true
+    try {
+      const res = await inquiryApi.update(item.id, { is_spam: newIsSpam })
+      toast.success(newIsSpam ? '已标记为垃圾邮件' : '已取消垃圾邮件标记')
+      fetchData()
+    } catch {
+      toast.error('操作失败')
+    }
+  }
+
+  // 选择相关
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === inquiries.length && inquiries.length > 0) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(inquiries.map(i => i.id)))
+    }
+  }
+
+  const isAllSelected = inquiries.length > 0 && selectedIds.size === inquiries.length
 
   // 大区颜色
   const getRegionBadgeClass = (value: string) => {
@@ -105,16 +152,19 @@ export function InquiryListPage() {
           <p className="text-slate-500 text-sm mt-1">
             共 {total} 条 | 本页 {inquiries.length} 条
             {validCount > 0 && <span className="ml-2 text-emerald-600">有效 {validCount}</span>}
+            {selectedIds.size > 0 && (
+              <span className="ml-2 text-primary-600 font-medium">已选 {selectedIds.size} 条</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={handleExport}
+            onClick={() => handleExport(selectedIds.size > 0 ? Array.from(selectedIds) : undefined)}
             className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 hover:border-primary-300 hover:text-primary-600 transition-all"
-            title="导出Excel"
+            title={selectedIds.size > 0 ? `导出选中的 ${selectedIds.size} 条` : '导出全部'}
           >
             <Download className="w-4 h-4" />
-            导出
+            {selectedIds.size > 0 ? `导出(${selectedIds.size})` : '导出全部'}
           </button>
           <button
             onClick={fetchData}
@@ -154,12 +204,34 @@ export function InquiryListPage() {
 
           <div className="w-px h-6 bg-slate-200" />
 
-          <FilterSelect value={regionFilter} onChange={(v) => { setRegionFilter(v); setPage(1) }}
-            options={REGIONS} label="大区" />
-          <FilterSelect value={continentFilter} onChange={(v) => { setContinentFilter(v); setPage(1) }}
-            options={CONTINENTS} label="大洲" />
-          <FilterSelect value={isSpamFilter} onChange={(v) => { setIsSpamFilter(v); setPage(1) }}
+          <FilterSelect value={regionFilter} onChange={handleFilterChange(setRegionFilter)}
+            options={regionOptions} label="大区" />
+          <FilterSelect value={continentFilter} onChange={handleFilterChange(setContinentFilter)}
+            options={continentOptions} label="大洲" />
+          <FilterSelect value={isSpamFilter} onChange={handleFilterChange(setIsSpamFilter)}
             options={['全部', '有效询盘', '垃圾邮件']} label="状态" />
+
+          <div className="w-px h-6 bg-slate-200" />
+
+          {/* 时间筛选 */}
+          <div className="flex items-center gap-1.5">
+            <CalendarDays className="w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setPage(1) }}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
+              title="开始日期"
+            />
+            <span className="text-xs text-slate-400">至</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setPage(1) }}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
+              title="结束日期"
+            />
+          </div>
         </div>
       </div>
 
@@ -180,9 +252,14 @@ export function InquiryListPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full table-stripe text-sm" style={{minWidth: '1400px'}}>
+            <table className="w-full table-stripe text-sm" style={{minWidth: '1500px'}}>
               <thead>
                 <tr className="bg-gradient-to-r from-primary-500 to-accent-500">
+                  <th className="px-2 py-2.5 text-center w-10">
+                    <button onClick={toggleSelectAll} className="text-white/90 hover:text-white transition-colors">
+                      {isAllSelected ? <SquareCheck className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                    </button>
+                  </th>
                   <th className="px-3 py-2.5 text-xs font-semibold text-white text-left">编号</th>
                   <th className="px-3 py-2.5 text-xs font-semibold text-white text-left">业务员</th>
                   <th className="px-3 py-2.5 text-xs font-semibold text-white text-left">大洲/大区</th>
@@ -200,7 +277,14 @@ export function InquiryListPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {inquiries.map((item) => (
-                  <tr key={item.id} className="hover:bg-primary-50/30 transition-colors group">
+                  <tr key={item.id} className={`hover:bg-primary-50/30 transition-colors group ${selectedIds.has(item.id) ? 'bg-primary-50/50' : ''}`}>
+                    <td className="px-2 py-2.5 text-center">
+                      <button onClick={() => toggleSelect(item.id)} className="text-slate-300 hover:text-primary-500 transition-colors">
+                        {selectedIds.has(item.id)
+                          ? <SquareCheck className="w-4 h-4 text-primary-500" />
+                          : <Square className="w-4 h-4" />}
+                      </button>
+                    </td>
                     <td className="px-3 py-2.5">
                       <Link to={`/inquiries/${item.id}`} className="text-xs font-mono text-primary-600 hover:text-primary-700">
                         {item.inquiry_no}
@@ -267,6 +351,15 @@ export function InquiryListPage() {
                         >
                           <Eye className="w-4 h-4 text-slate-400 hover:text-primary-500" />
                         </Link>
+                        <button
+                          onClick={() => handleSpamToggle(item)}
+                          className={`p-1.5 rounded transition-colors opacity-60 group-hover:opacity-100 ${item.is_spam ? 'hover:bg-emerald-50' : 'hover:bg-red-50'}`}
+                          title={item.is_spam ? '取消垃圾标记' : '标记为垃圾'}
+                        >
+                          {item.is_spam
+                            ? <ShieldCheck className="w-4 h-4 text-emerald-500 hover:text-emerald-600" />
+                            : <ShieldAlert className="w-4 h-4 text-slate-400 hover:text-red-500" />}
+                        </button>
                         <button
                           onClick={() => handleDelete(item.id)}
                           className="p-1.5 rounded hover:bg-red-50 transition-colors opacity-60 group-hover:opacity-100"

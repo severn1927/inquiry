@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { analyzeApi, inquiryApi, settingsApi } from '@/services/api'
-import type { AIAnalysisResult, StaffItem } from '@/types'
+import type { AIAnalysisResult, StaffItem, AssignRules } from '@/types'
 import { fileToBase64, CONTINENT_TO_REGION, normalizeContinent } from '@/utils'
+import { useDicts } from '@/hooks/useDict'
 import {
   Sparkles, Save, ArrowLeft, Loader2,
   Image as ImageIcon, AlertTriangle, CheckCircle,
   FileText, X, ChevronDown, UserCheck, Zap, RefreshCw,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 // ===== 权重随机分配 =====
 function weightedRandom(persons: StaffItem[]): StaffItem | null {
@@ -22,9 +24,18 @@ function weightedRandom(persons: StaffItem[]): StaffItem | null {
   return persons[persons.length - 1]
 }
 
-// ===== 排班分配（亚太） =====
-function assignAsiaDuty(persons: StaffItem[], dutyConfig: { base_date: string; staff_order: string[]; days_per_person: number }): StaffItem | null {
+// ===== 排班分配（支持多区域） =====
+function assignDuty(
+  persons: StaffItem[],
+  dutyConfig: { base_date: string; staff_order: string[]; days_per_person: number },
+  region: string,
+  scheduleRegions: string[],
+): StaffItem | null {
   if (!dutyConfig.staff_order.length || !persons.length) return null
+  // 只对排班区域使用排班逻辑
+  if (!scheduleRegions.includes(region)) {
+    return weightedRandom(persons)
+  }
   try {
     const base = new Date(dutyConfig.base_date)
     const now = new Date()
@@ -40,13 +51,22 @@ function assignAsiaDuty(persons: StaffItem[], dutyConfig: { base_date: string; s
   }
 }
 
-const PRODUCT_CATEGORIES = [
-  "4线设备", "视频", "软件", "SIM", "未知", "硬件", "纯无线",
-  "OBD", "宠物", "多线（录音&SOS&测油）", "卫星类",
-  "Tag类", "其他/技术/售后", "OBD2", "太阳能"
-]
+// 表单验证规则
+interface ValidationRule {
+  field: string
+  label: string
+  required?: boolean
+}
 
-const CONTINENTS = ["亚洲", "欧洲", "非洲", "北美洲", "南美洲", "大洋洲", "中东"]
+const VALIDATION_RULES: ValidationRule[] = [
+  { field: 'customer_name', label: '客户名字', required: true },
+  { field: 'email', label: 'Email', required: true },
+  { field: 'continent', label: '大洲', required: true },
+  { field: 'country', label: '国家', required: true },
+  { field: 'region', label: '大区', required: true },
+  { field: 'product_category', label: '产品类别', required: true },
+  { field: 'visitor_need', label: '访客需求', required: true },
+]
 
 export function NewInquiryPage() {
   const navigate = useNavigate()
@@ -63,20 +83,28 @@ export function NewInquiryPage() {
   const [editedOcrText, setEditedOcrText] = useState('')
   const [error, setError] = useState('')
   const [showRaw, setShowRaw] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+
+  // 字典数据驱动下拉菜单
+  const dictData = useDicts(['continent', 'region', 'product_category'])
+  const continents = dictData.continent || []
+  const regions = dictData.region || []
+  const productCategories = dictData.product_category || []
 
   // 业务员数据
   const [staffByRegion, setStaffByRegion] = useState<Record<string, StaffItem[]>>({})
   const [dutyConfig, setDutyConfig] = useState<{ base_date: string; staff_order: string[]; days_per_person: number }>({ base_date: '2026-05-05', staff_order: [], days_per_person: 2 })
+  const [assignRules, setAssignRules] = useState<AssignRules>({ schedule_regions: [], continent_overrides: {} })
 
   const [formData, setFormData] = useState({
     customer_name: '', company_name: '', email: '', phone: '',
     other_contact: '', continent: '', country: '', region: '',
     visitor_need: '', raw_need: '', product_category: '',
     email_subject: '', sender: '', staff: '', staff_email: '',
-    is_spam: false, spam_reason: '', remark: '',
+    is_spam: false, spam_reason: '', remark: '', inquiry_time: '',
   })
 
-  // 加载业务员配置
+  // 加载业务员配置和分配规则
   useEffect(() => {
     settingsApi.getStaffDuty().then(res => {
       const byRegion: Record<string, StaffItem[]> = {}
@@ -87,25 +115,41 @@ export function NewInquiryPage() {
       setStaffByRegion(byRegion)
       if (res.data.duty) setDutyConfig(res.data.duty)
     }).catch(() => {})
+
+    settingsApi.getAssignRules().then(res => {
+      setAssignRules({
+        schedule_regions: res.data.schedule_regions || [],
+        continent_overrides: res.data.continent_overrides || {},
+      })
+    }).catch(() => {})
   }, [])
+
+  // 获取大洲到区域映射（考虑覆盖规则）
+  const getRegionForContinent = (continent: string): string => {
+    if (!continent) return ''
+    // 先检查覆盖规则（continent_overrides新格式）
+    const override = assignRules.continent_overrides?.[continent]
+    if (override && typeof override === 'object' && 'region' in override) {
+      return (override as any).region
+    }
+    // 兼容旧格式
+    if (typeof override === 'string') return override
+    return CONTINENT_TO_REGION[continent] || ''
+  }
 
   // 本地分配业务员
   const doLocalAssign = (region: string): StaffItem | null => {
     const persons = staffByRegion[region] || []
     if (!persons.length) return null
-    if (region === '亚太') {
-      return assignAsiaDuty(persons, dutyConfig) || weightedRandom(persons)
-    }
-    return weightedRandom(persons)
+    return assignDuty(persons, dutyConfig, region, assignRules.schedule_regions) || weightedRandom(persons)
   }
 
   // 大洲变更 → 映射大区 → 分配
   const handleContinentChange = (value: string) => {
     const normalized = normalizeContinent(value)
-    setFormData(prev => ({ ...prev, continent: normalized }))
-    if (normalized && CONTINENT_TO_REGION[normalized]) {
-      const region = CONTINENT_TO_REGION[normalized]
-      setFormData(prev => ({ ...prev, continent: normalized, region }))
+    const region = getRegionForContinent(normalized)
+    setFormData(prev => ({ ...prev, continent: normalized, region }))
+    if (region) {
       const person = doLocalAssign(region)
       if (person) {
         setFormData(prev => ({ ...prev, staff: person.name, staff_email: person.email }))
@@ -205,11 +249,12 @@ export function NewInquiryPage() {
           company_name: data.extracted?.company_name || prev.company_name,
           email: data.extracted?.email || prev.email,
           phone: data.extracted?.phone || prev.phone,
+          inquiry_time: data.extracted?.email_time || prev.inquiry_time,
         }))
       } else {
         const ext = data.extracted || {}
         const continent = normalizeContinent(ext.continent || '')
-        const region = ext.region || (continent ? CONTINENT_TO_REGION[continent] || '' : '')
+        const region = ext.region || getRegionForContinent(continent)
 
         // 分配业务员
         let staff = ext.staff || ''
@@ -237,6 +282,7 @@ export function NewInquiryPage() {
           staff: staff || prev.staff,
           staff_email: staffEmail || prev.staff_email,
           is_spam: false, spam_reason: '',
+          inquiry_time: ext.email_time || prev.inquiry_time,
         }))
       }
     } catch (err: unknown) {
@@ -255,11 +301,11 @@ export function NewInquiryPage() {
       const data = res.data
       setAnalysisResult(data); setOcrText(editedOcrText); setShowOcrEdit(false)
       if (!data.is_inquiry) {
-        setFormData(prev => ({ ...prev, is_spam: true, spam_reason: data.spam_reason }))
+        setFormData(prev => ({ ...prev, is_spam: true, spam_reason: data.spam_reason, inquiry_time: data.extracted?.email_time || prev.inquiry_time }))
       } else {
         const ext = data.extracted || {}
         const continent = normalizeContinent(ext.continent || '')
-        const region = ext.region || (continent ? CONTINENT_TO_REGION[continent] || '' : '')
+        const region = ext.region || getRegionForContinent(continent)
         let staff = '', staffEmail = ''
         if (region) {
           const person = doLocalAssign(region)
@@ -281,6 +327,7 @@ export function NewInquiryPage() {
           staff: staff || prev.staff,
           staff_email: staffEmail || prev.staff_email,
           is_spam: false, spam_reason: '',
+          inquiry_time: ext.email_time || prev.inquiry_time,
         }))
       }
     } catch (err: unknown) {
@@ -290,19 +337,57 @@ export function NewInquiryPage() {
     }
   }
 
+  // 表单验证
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {}
+    for (const rule of VALIDATION_RULES) {
+      if (rule.required) {
+        const val = (formData as any)[rule.field]
+        if (!val || !val.toString().trim()) {
+          errors[rule.field] = `${rule.label}不能为空`
+        }
+      }
+    }
+    setValidationErrors(errors)
+    if (Object.keys(errors).length > 0) {
+      const firstField = Object.keys(errors)[0]
+      toast.error(errors[firstField])
+      return false
+    }
+    return true
+  }
+
   const handleSave = async () => {
+    // 垃圾邮件只需有spam_reason即可
+    if (formData.is_spam && !formData.spam_reason.trim()) {
+      toast.error('请填写垃圾邮件原因')
+      return
+    }
+    if (!formData.is_spam && !validateForm()) return
+
     setSaving(true)
     try {
       await inquiryApi.create(formData)
+      toast.success('询盘已保存')
       navigate('/inquiries')
-    } catch {
-      setError('保存失败')
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || '保存失败'
+      setError(msg)
+      toast.error(msg)
     }
     finally { setSaving(false) }
   }
 
   const updateField = (field: string, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }))
+    // 清除该字段的验证错误
+    if (validationErrors[field]) {
+      setValidationErrors(prev => {
+        const next = { ...prev }
+        delete next[field]
+        return next
+      })
+    }
   }
 
   return (
@@ -345,88 +430,98 @@ export function NewInquiryPage() {
                 </button>
               </div>
             </div>
-
-            <div className="p-5" onPaste={handlePaste}>
-              {inputType === 'image' ? (
+            <div className="p-5">
+              {!inputType && (
+                <div
+                  onPaste={handlePaste}
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-12 text-center cursor-pointer hover:border-primary-300 hover:bg-primary-50/30 transition-all"
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                      <Sparkles className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <div>
+                      <p className="text-slate-600 font-medium">粘贴邮件截图或文字</p>
+                      <p className="text-slate-400 text-xs mt-1">支持 Ctrl+V 粘贴图片或文字</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {inputType === 'image' && (
                 <div className="space-y-3">
-                  {imagePreview ? (
-                    <div className="relative">
-                      <img src={imagePreview} alt="邮件截图" className="w-full max-h-[400px] object-contain rounded-lg border border-slate-200 bg-slate-50" />
-                      <button onClick={clearInput} className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-lg hover:bg-white shadow-sm transition-colors">
-                        <X className="w-4 h-4 text-slate-500" />
+                  <div className="relative group">
+                    {imagePreview && <img src={imagePreview} alt="邮件截图" className="w-full rounded-lg border border-slate-200 max-h-96 object-contain bg-slate-50" />}
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
+                      <label className="cursor-pointer p-1.5 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200 hover:bg-white">
+                        <ImageIcon className="w-3.5 h-3.5 text-slate-600" />
+                        <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} ref={fileInputRef} />
+                      </label>
+                      <button onClick={clearInput} className="p-1.5 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200 hover:bg-white">
+                        <X className="w-3.5 h-3.5 text-slate-600" />
                       </button>
                     </div>
-                  ) : (
-                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-12 text-center hover:border-primary-300 transition-colors cursor-pointer"
-                      onClick={() => fileInputRef.current?.click()}>
-                      <ImageIcon className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                      <p className="text-slate-500 text-sm">点击上传或 <span className="text-primary-500 font-medium">Ctrl+V 粘贴</span> 邮件截图</p>
-                      <p className="text-slate-400 text-xs mt-1">支持 PNG, JPG, BMP 格式</p>
-                    </div>
-                  )}
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                  </div>
                 </div>
-              ) : inputType === 'text' ? (
-                <textarea
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  placeholder="在此粘贴邮件原文内容..."
-                  rows={16}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 resize-none"
-                />
-              ) : (
-                <div className="border-2 border-dashed border-slate-200 rounded-xl p-16 text-center">
-                  <Sparkles className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                  <p className="text-slate-500 text-sm">选择输入方式后，在此区域粘贴邮件截图或文字</p>
+              )}
+              {inputType === 'text' && (
+                <div className="space-y-3">
+                  <textarea
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    placeholder="在此粘贴邮件内容..."
+                    rows={10}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 resize-none"
+                  />
+                  <button onClick={clearInput} className="text-xs text-slate-400 hover:text-slate-600">
+                    <X className="w-3 h-3 inline mr-1" />清除
+                  </button>
                 </div>
               )}
             </div>
+          </div>
 
-            {/* Action Bar */}
-            <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button onClick={handleAnalyze}
-                  disabled={analyzing || !inputType || (inputType === 'text' && !textInput.trim()) || (inputType === 'image' && !imageBase64)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary-500 to-accent-500 text-white text-sm font-medium rounded-lg hover:from-primary-600 hover:to-accent-600 transition-all disabled:opacity-50 shadow-md shadow-primary-500/20 btn-glow">
-                  {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  {analyzing ? 'AI 分析中...' : 'AI 智能分析'}
-                </button>
-                {clearInput && (imagePreview || textInput) && (
-                  <button onClick={clearInput} className="px-3 py-2.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-                    清除
+          {/* Analyze Button */}
+          {inputType && (
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="w-full py-3 bg-gradient-to-r from-primary-500 to-accent-500 text-white font-medium rounded-xl hover:from-primary-600 hover:to-accent-600 transition-all disabled:opacity-50 shadow-md shadow-primary-500/20 flex items-center justify-center gap-2"
+            >
+              {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {analyzing ? 'AI 分析中...' : 'AI 智能分析'}
+            </button>
+          )}
+
+          {/* OCR Result */}
+          {ocrText && (
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-100 bg-slate-50/50">
+                <span className="text-xs font-medium text-slate-600">OCR 识别结果</span>
+                {!showOcrEdit && (
+                  <button onClick={() => setShowOcrEdit(true)} className="text-xs text-primary-500 hover:text-primary-600">
+                    编辑修正
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-
-          {/* OCR 结果 */}
-          {ocrText && (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-                <h3 className="text-sm font-semibold text-slate-700">OCR 识别结果</h3>
-                <div className="flex items-center gap-2">
-                  {!showOcrEdit ? (
-                    <button onClick={() => { setShowOcrEdit(true); setEditedOcrText(ocrText) }}
-                      className="text-xs text-primary-500 hover:text-primary-600 font-medium">修正后重分析</button>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <button onClick={handleReAnalyze} disabled={analyzing}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary-500 text-white text-xs rounded-lg hover:bg-primary-600 disabled:opacity-50">
+              <div className="px-5 py-3">
+                {showOcrEdit ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={editedOcrText}
+                      onChange={(e) => setEditedOcrText(e.target.value)}
+                      rows={6}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 resize-none"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setShowOcrEdit(false)} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700">取消</button>
+                      <button onClick={handleReAnalyze} disabled={analyzing} className="px-3 py-1.5 text-xs bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-1">
                         {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                         重新分析
                       </button>
-                      <button onClick={() => setShowOcrEdit(false)} className="text-xs text-slate-500">取消</button>
                     </div>
-                  )}
-                </div>
-              </div>
-              <div className="p-4">
-                {showOcrEdit ? (
-                  <textarea value={editedOcrText} onChange={(e) => setEditedOcrText(e.target.value)}
-                    rows={8} className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 resize-none" />
+                  </div>
                 ) : (
-                  <pre className="text-xs text-slate-600 whitespace-pre-wrap max-h-[200px] overflow-y-auto">{ocrText}</pre>
+                  <pre className="text-xs text-slate-600 whitespace-pre-wrap max-h-40 overflow-y-auto font-sans">{ocrText}</pre>
                 )}
               </div>
             </div>
@@ -443,6 +538,20 @@ export function NewInquiryPage() {
 
         {/* Right: Form */}
         <div className="space-y-4">
+          {/* 邮件时间 */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5">
+            <h2 className="font-semibold text-slate-700 text-sm mb-4 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-primary-500" /> 邮件时间
+            </h2>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">
+                邮件发送时间 <span className="text-slate-400">（用于生成询盘编号，AI提取时自动填充）</span>
+              </label>
+              <input type="datetime-local" value={formData.inquiry_time ? formData.inquiry_time.slice(0, 16) : ''} onChange={e => updateField('inquiry_time', e.target.value ? e.target.value.replace('T', ' ') : '')}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500" />
+            </div>
+          </div>
+
           {/* 垃圾邮件标记 */}
           {formData.is_spam && (
             <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4">
@@ -465,9 +574,11 @@ export function NewInquiryPage() {
             </h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">客户名字</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">客户名字 <span className="text-red-400">*</span></label>
                 <input type="text" value={formData.customer_name} onChange={(e) => updateField('customer_name', e.target.value)}
-                  placeholder="客户姓名" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500" />
+                  placeholder="客户姓名"
+                  className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 ${validationErrors.customer_name ? 'border-red-300' : 'border-slate-200'}`} />
+                {validationErrors.customer_name && <p className="text-xs text-red-500 mt-1">{validationErrors.customer_name}</p>}
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">公司名字</label>
@@ -475,9 +586,11 @@ export function NewInquiryPage() {
                   placeholder="公司名称" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">Email</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Email <span className="text-red-400">*</span></label>
                 <input type="email" value={formData.email} onChange={(e) => updateField('email', e.target.value)}
-                  placeholder="email@example.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500" />
+                  placeholder="email@example.com"
+                  className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 ${validationErrors.email ? 'border-red-300' : 'border-slate-200'}`} />
+                {validationErrors.email && <p className="text-xs text-red-500 mt-1">{validationErrors.email}</p>}
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">电话</label>
@@ -504,42 +617,47 @@ export function NewInquiryPage() {
             </h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">大洲</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">大洲 <span className="text-red-400">*</span></label>
                 <div className="relative">
                   <select value={formData.continent} onChange={(e) => handleContinentChange(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 pr-8">
+                    className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 pr-8 ${validationErrors.continent ? 'border-red-300' : 'border-slate-200'}`}>
                     <option value="">请选择</option>
-                    {CONTINENTS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {continents.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
+                {validationErrors.continent && <p className="text-xs text-red-500 mt-1">{validationErrors.continent}</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">国家</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">国家 <span className="text-red-400">*</span></label>
                 <input type="text" value={formData.country} onChange={(e) => updateField('country', e.target.value)}
-                  placeholder="国家" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500" />
+                  placeholder="国家"
+                  className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 ${validationErrors.country ? 'border-red-300' : 'border-slate-200'}`} />
+                {validationErrors.country && <p className="text-xs text-red-500 mt-1">{validationErrors.country}</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">大区</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">大区 <span className="text-red-400">*</span></label>
                 <div className="relative">
                   <select value={formData.region} onChange={(e) => handleRegionChange(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 pr-8">
+                    className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 pr-8 ${validationErrors.region ? 'border-red-300' : 'border-slate-200'}`}>
                     <option value="">请选择</option>
-                    {['美洲', '欧非', '亚太'].map(r => <option key={r} value={r}>{r}</option>)}
+                    {regions.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
+                {validationErrors.region && <p className="text-xs text-red-500 mt-1">{validationErrors.region}</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">产品类别</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">产品类别 <span className="text-red-400">*</span></label>
                 <div className="relative">
                   <select value={formData.product_category} onChange={(e) => updateField('product_category', e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 pr-8">
+                    className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 pr-8 ${validationErrors.product_category ? 'border-red-300' : 'border-slate-200'}`}>
                     <option value="">请选择</option>
-                    {PRODUCT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {productCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
+                {validationErrors.product_category && <p className="text-xs text-red-500 mt-1">{validationErrors.product_category}</p>}
               </div>
             </div>
 
@@ -569,10 +687,11 @@ export function NewInquiryPage() {
             <h2 className="font-semibold text-slate-700 text-sm mb-4">需求信息</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">访客需求（中文摘要）</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">访客需求（中文摘要） <span className="text-red-400">*</span></label>
                 <textarea value={formData.visitor_need} onChange={(e) => updateField('visitor_need', e.target.value)}
                   rows={3} placeholder="客户需求中文摘要"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 resize-none" />
+                  className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30 resize-none ${validationErrors.visitor_need ? 'border-red-300' : 'border-slate-200'}`} />
+                {validationErrors.visitor_need && <p className="text-xs text-red-500 mt-1">{validationErrors.visitor_need}</p>}
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -617,6 +736,7 @@ export function NewInquiryPage() {
                   <p>客户: {formData.customer_name || '-'} | 公司: {formData.company_name || '-'}</p>
                   <p>国家: {formData.country || '-'} | 大区: {formData.region || '-'} | 业务员: {formData.staff || '-'}</p>
                   <p>产品: {formData.product_category || '-'}</p>
+                  {formData.inquiry_time && <p>邮件时间: {formData.inquiry_time}</p>}
                 </div>
               )}
             </div>

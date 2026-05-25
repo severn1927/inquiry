@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { inquiryApi, settingsApi } from '@/services/api'
-import type { Inquiry, StaffItem, StaffDutyConfig } from '@/types'
+import type { Inquiry, StaffItem, StaffDutyConfig, AssignRules } from '@/types'
 import { formatDate, normalizeContinent, CONTINENT_TO_REGION } from '@/utils'
+import { useDicts } from '@/hooks/useDict'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Star, Mail, Globe, Phone, UserCheck, Loader2, Zap,
   Building2, Tag, MessageSquare, FileText, Calendar, Save,
 } from 'lucide-react'
-
-const REGIONS = ['美洲', '欧非', '亚太']
 
 // ===== 权重随机分配（美洲/欧非）=====
 function weightedRandom(persons: StaffItem[]): StaffItem | null {
@@ -69,6 +68,12 @@ export function InquiryDetailPage() {
   const [saving, setSaving] = useState(false)
   const [assigning, setAssigning] = useState(false)
   const [staffConfig, setStaffConfig] = useState<StaffDutyConfig | null>(null)
+  const [assignRules, setAssignRules] = useState<AssignRules>({ schedule_regions: [], continent_overrides: {} })
+
+  // 字典数据驱动下拉菜单
+  const dictData = useDicts(['continent', 'region'])
+  const continents = dictData.continent || []
+  const regions = dictData.region || []
 
   useEffect(() => {
     if (!id) return
@@ -76,9 +81,14 @@ export function InquiryDetailPage() {
     Promise.all([
       inquiryApi.getById(Number(id)),
       settingsApi.getStaffDuty(),
-    ]).then(([inqRes, staffRes]) => {
+      settingsApi.getAssignRules(),
+    ]).then(([inqRes, staffRes, rulesRes]) => {
       setInquiry(inqRes.data)
       setStaffConfig(staffRes.data)
+      setAssignRules({
+        schedule_regions: rulesRes.data.schedule_regions || [],
+        continent_overrides: rulesRes.data.continent_overrides || {},
+      })
       setLoading(false)
     }).catch(() => {
       toast.error('加载询盘详情失败')
@@ -86,10 +96,21 @@ export function InquiryDetailPage() {
     })
   }, [id])
 
+  // 获取大洲到区域映射（考虑覆盖规则）
+  const getRegionForContinent = (continent: string): string => {
+    if (!continent) return ''
+    const override = assignRules.continent_overrides?.[continent]
+    if (override && typeof override === 'object' && 'region' in override) {
+      return (override as any).region
+    }
+    if (typeof override === 'string') return override
+    return CONTINENT_TO_REGION[continent] || ''
+  }
+
   // 按大区分组的业务员
   const groupedStaff: Record<string, StaffItem[]> = {}
   if (staffConfig) {
-    REGIONS.forEach(r => {
+    regions.forEach(r => {
       const persons = staffConfig.staff.filter(p => p.region === r)
       if (persons.length > 0) groupedStaff[r] = persons
     })
@@ -135,8 +156,8 @@ export function InquiryDetailPage() {
       return
     }
 
-    if (normalized && CONTINENT_TO_REGION[normalized]) {
-      const region = CONTINENT_TO_REGION[normalized]
+    const region = getRegionForContinent(normalized)
+    if (region) {
       const person = doLocalAssign(region)
       if (person) {
         const newInquiry = { ...updated, region, staff: person.name, staff_email: person.email }
@@ -304,7 +325,7 @@ export function InquiryDetailPage() {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 appearance-none cursor-pointer"
                 >
                   <option value="">请选择大洲</option>
-                  {['亚洲', '北美洲', '南美洲', '欧洲', '非洲', '中东', '大洋洲'].map(c => (
+                  {continents.map(c => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
@@ -312,7 +333,7 @@ export function InquiryDetailPage() {
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">
                   大区
-                  {inquiry.continent && CONTINENT_TO_REGION[inquiry.continent] && (
+                  {inquiry.continent && getRegionForContinent(inquiry.continent) && (
                     <span className="ml-1.5 text-indigo-500 font-normal">(自动)</span>
                   )}
                 </label>
@@ -322,7 +343,7 @@ export function InquiryDetailPage() {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 appearance-none cursor-pointer"
                 >
                   <option value="">请选择大区</option>
-                  {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  {regions.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
               <div>
@@ -446,6 +467,7 @@ export function InquiryDetailPage() {
             <h3 className="font-display font-semibold text-slate-800 mb-4">基本信息</h3>
             <div className="space-y-3">
               <InfoRow label="询盘编号" value={inquiry.inquiry_no} />
+              <InfoRow label="邮件时间" value={inquiry.inquiry_time ? formatDate(inquiry.inquiry_time) : '-'} />
               <InfoRow label="登记时间" value={formatDate(inquiry.created_at)} />
               <InfoRow label="更新时间" value={formatDate(inquiry.updated_at)} />
               <InfoRow label="询盘月份" value={inquiry.inquiry_month} />

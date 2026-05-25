@@ -27,13 +27,12 @@ export function Sidebar() {
     >
       {/* Logo */}
       <div className="flex items-center h-16 px-4 border-b border-white/10">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-accent-500 flex items-center justify-center font-bold text-sm shrink-0">
-          INQ
+        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-400 to-accent-500 flex items-center justify-center font-bold text-sm shrink-0">
+          AINQ
         </div>
         {!collapsed && (
           <div className="ml-3 overflow-hidden">
-            <div className="font-display font-bold text-base whitespace-nowrap">INQ V3</div>
-            <div className="text-[10px] text-primary-300 whitespace-nowrap">询盘管理系统</div>
+            <div className="font-display font-bold text-base whitespace-nowrap">爱询盘 </div>
           </div>
         )}
       </div>
